@@ -1,0 +1,674 @@
+import React, { useState, useEffect } from 'react';
+
+// Main App component
+const App = () => {
+  // State for daily entry form
+  const [date, setDate] = useState('');
+  const [activitySummary, setActivitySummary] = useState('');
+  const [deepWorkHours, setDeepWorkHours] = useState('');
+  const [subjectiveRating, setSubjectiveRating] = useState(0);
+  const [exercise, setExercise] = useState(false); // New: Exercise (Yes/No)
+  const [readingTime, setReadingTime] = useState(''); // New: Reading Time (mins)
+  const [notes, setNotes] = useState(''); // New: Notes
+  const [message, setMessage] = useState('');
+
+  // State for all daily entries
+  const [dailyEntries, setDailyEntries] = useState([]);
+
+  // State for current view (daily, weekly, monthly, quarterly)
+  const [currentView, setCurrentView] = useState('daily');
+
+  // State for review period selection
+  const [selectedWeek, setSelectedWeek] = useState('');
+  const [selectedMonth, setSelectedMonth] = useState('');
+  const [selectedQuarter, setSelectedQuarter] = useState('');
+
+  // State for LLM generated insights and suggestions
+  const [insights, setInsights] = useState('');
+  const [suggestions, setSuggestions] = useState('');
+  const [isLoadingInsights, setIsLoadingInsights] = useState(false);
+  const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false);
+
+  // Load entries from localStorage on initial render
+  useEffect(() => {
+    const storedEntries = JSON.parse(localStorage.getItem('goodLifeEntries')) || [];
+    setDailyEntries(storedEntries);
+
+    // Set default date to today
+    const today = new Date();
+    const year = today.getFullYear();
+    const month = (today.getMonth() + 1).toString().padStart(2, '0');
+    const day = today.getDate().toString().padStart(2, '0');
+    setDate(`${year}-${month}-${day}`);
+  }, []);
+
+  // Save entries to localStorage whenever dailyEntries changes
+  useEffect(() => {
+    localStorage.setItem('goodLifeEntries', JSON.stringify(dailyEntries));
+  }, [dailyEntries]);
+
+  // Handle form submission for daily entry
+  const handleDailySubmit = (e) => {
+    e.preventDefault();
+
+    if (!date || !activitySummary || deepWorkHours === '' || subjectiveRating === null || readingTime === '') {
+      setMessage('Please fill in all required fields for the daily entry.');
+      return;
+    }
+
+    const newEntry = {
+      id: Date.now(), // Unique ID
+      date,
+      activitySummary,
+      deepWorkHours: parseFloat(deepWorkHours),
+      subjectiveRating: parseInt(subjectiveRating),
+      exercise, // New field
+      readingTime: parseInt(readingTime), // New field
+      notes, // New field
+    };
+
+    setDailyEntries((prevEntries) => [...prevEntries, newEntry]);
+    setMessage('Daily entry saved successfully!');
+
+    // Clear form fields after submission
+    setActivitySummary('');
+    setDeepWorkHours('');
+    setSubjectiveRating(0);
+    setExercise(false);
+    setReadingTime('');
+    setNotes('');
+    // Keep the date as today's date or allow user to change
+    const today = new Date();
+    const year = today.getFullYear();
+    const month = (today.getMonth() + 1).toString().padStart(2, '0');
+    const day = today.getDate().toString().padStart(2, '0');
+    setDate(`${year}-${month}-${day}`);
+  };
+
+  // Helper function to get week number
+  const getWeekNumber = (d) => {
+    d = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+    d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
+    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+    const weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+    return `${d.getUTCFullYear()}-W${weekNo.toString().padStart(2, '0')}`;
+  };
+
+  // Helper function to get quarter
+  const getQuarter = (d) => {
+    const month = d.getMonth() + 1;
+    let quarter = Math.ceil(month / 3);
+    return `${d.getFullYear()}-Q${quarter}`;
+  };
+
+  // Filter entries for reviews
+  const getFilteredEntries = (view) => {
+    const sortedEntries = [...dailyEntries].sort((a, b) => new Date(a.date) - new Date(b.date));
+
+    if (view === 'weekly' && selectedWeek) {
+      return sortedEntries.filter(entry => getWeekNumber(new Date(entry.date)) === selectedWeek);
+    }
+    if (view === 'monthly' && selectedMonth) {
+      return sortedEntries.filter(entry => entry.date.startsWith(selectedMonth));
+    }
+    if (view === 'quarterly' && selectedQuarter) {
+      return sortedEntries.filter(entry => getQuarter(new Date(entry.date)) === selectedQuarter);
+    }
+    return sortedEntries;
+  };
+
+  // Generate options for week, month, quarter selectors
+  const getAvailablePeriods = (type) => {
+    const periods = new Set();
+    dailyEntries.forEach(entry => {
+      const d = new Date(entry.date);
+      if (type === 'week') periods.add(getWeekNumber(d));
+      if (type === 'month') periods.add(entry.date.substring(0, 7));
+      if (type === 'quarter') periods.add(getQuarter(d));
+    });
+    return Array.from(periods).sort();
+  };
+
+  const calculateReviewSummary = (entries) => {
+    if (entries.length === 0) {
+      return {
+        totalEntries: 0,
+        avgSubjectiveRating: 0,
+        totalDeepWorkHours: 0,
+        exerciseDays: 0,
+        totalReadingTime: 0,
+        commonActivities: [],
+      };
+    }
+
+    const totalSubjectiveRating = entries.reduce((sum, entry) => sum + entry.subjectiveRating, 0);
+    const totalDeepWorkHours = entries.reduce((sum, entry) => sum + entry.deepWorkHours, 0);
+    const exerciseDays = entries.filter(entry => entry.exercise).length;
+    const totalReadingTime = entries.reduce((sum, entry) => sum + entry.readingTime, 0);
+
+    const activityCounts = {};
+    entries.forEach(entry => {
+      const keywords = entry.activitySummary.toLowerCase().split(/\W+/).filter(word => word.length > 2);
+      keywords.forEach(word => {
+        activityCounts[word] = (activityCounts[word] || 0) + 1;
+      });
+    });
+
+    const sortedActivities = Object.entries(activityCounts).sort(([, a], [, b]) => b - a);
+    const commonActivities = sortedActivities.slice(0, 5).map(([activity]) => activity);
+
+    return {
+      totalEntries: entries.length,
+      avgSubjectiveRating: (totalSubjectiveRating / entries.length).toFixed(2),
+      totalDeepWorkHours: totalDeepWorkHours.toFixed(2),
+      exerciseDays: exerciseDays,
+      totalReadingTime: totalReadingTime,
+      commonActivities: commonActivities,
+    };
+  };
+
+  // Function to call Gemini API for insights
+  const generateInsights = async (entries, periodType) => {
+    setIsLoadingInsights(true);
+    setInsights('');
+    setSuggestions(''); // Clear suggestions when generating new insights
+
+    if (entries.length === 0) {
+      setInsights(`No data to generate insights for this ${periodType}.`);
+      setIsLoadingInsights(false);
+      return;
+    }
+
+    const formattedEntries = entries.map(entry => (
+      `Date: ${entry.date}, Activity: ${entry.activitySummary}, Deep Work: ${entry.deepWorkHours}hrs, Exercise: ${entry.exercise ? 'Yes' : 'No'}, Reading: ${entry.readingTime}mins, Rating: ${entry.subjectiveRating}, Notes: ${entry.notes || 'N/A'}`
+    )).join('\n');
+
+    const prompt = `Analyze the following daily entries for a ${periodType} and provide insights into patterns, correlations between activities/habits and subjective ratings, and overall trends. Focus on what seems to contribute to good days (+1, +2) and bad days (-1, -2).
+    
+    Daily Entries:\n${formattedEntries}`;
+
+    let chatHistory = [];
+    chatHistory.push({ role: "user", parts: [{ text: prompt }] });
+    const payload = { contents: chatHistory };
+    const apiKey = ""; // If you want to use models other than gemini-2.5-flash-preview-05-20 or imagen-3.0-generate-002, provide an API key here. Otherwise, leave this as-is.
+    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
+
+    let retries = 0;
+    const maxRetries = 5;
+    const baseDelay = 1000; // 1 second
+
+    while (retries < maxRetries) {
+      try {
+        const response = await fetch(apiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) {
+          if (response.status === 429) { // Too many requests
+            const delay = baseDelay * Math.pow(2, retries);
+            retries++;
+            await new Promise(resolve => setTimeout(resolve, delay));
+            continue; // Retry
+          } else {
+            throw new Error(`API error: ${response.status} ${response.statusText}`);
+          }
+        }
+
+        const result = await response.json();
+        if (result.candidates && result.candidates.length > 0 &&
+            result.candidates[0].content && result.candidates[0].content.parts &&
+            result.candidates[0].content.parts.length > 0) {
+          const text = result.candidates[0].content.parts[0].text;
+          setInsights(text);
+        } else {
+          setInsights('Could not generate insights. Unexpected API response structure.');
+        }
+        break; // Success, exit loop
+      } catch (error) {
+        console.error('Error generating insights:', error);
+        setInsights(`Failed to generate insights: ${error.message}`);
+        break; // Exit loop on other errors
+      } finally {
+        setIsLoadingInsights(false);
+      }
+    }
+  };
+
+  // Function to call Gemini API for micro-adjustments/suggestions
+  const generateMicroAdjustments = async (entries, periodType) => {
+    setIsLoadingSuggestions(true);
+    setSuggestions('');
+
+    if (entries.length === 0) {
+      setSuggestions(`No data to generate suggestions for this ${periodType}.`);
+      setIsLoadingSuggestions(false);
+      return;
+    }
+
+    const formattedEntries = entries.map(entry => (
+      `Date: ${entry.date}, Activity: ${entry.activitySummary}, Deep Work: ${entry.deepWorkHours}hrs, Exercise: ${entry.exercise ? 'Yes' : 'No'}, Reading: ${entry.readingTime}mins, Rating: ${entry.subjectiveRating}, Notes: ${entry.notes || 'N/A'}`
+    )).join('\n');
+
+    const prompt = `Based on the following daily entries for a ${periodType}, provide 3-5 actionable, small "micro-adjustments" or habits that could help improve the subjective rating and overall well-being. Focus on practical, easy-to-implement suggestions.
+    
+    Daily Entries:\n${formattedEntries}`;
+
+    let chatHistory = [];
+    chatHistory.push({ role: "user", parts: [{ text: prompt }] });
+    const payload = { contents: chatHistory };
+    const apiKey = ""; // If you want to use models other than gemini-2.5-flash-preview-05-20 or imagen-3.0-generate-002, provide an API key here. Otherwise, leave this as-is.
+    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
+
+    let retries = 0;
+    const maxRetries = 5;
+    const baseDelay = 1000; // 1 second
+
+    while (retries < maxRetries) {
+      try {
+        const response = await fetch(apiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) {
+          if (response.status === 429) { // Too many requests
+            const delay = baseDelay * Math.pow(2, retries);
+            retries++;
+            await new Promise(resolve => setTimeout(resolve, delay));
+            continue; // Retry
+          } else {
+            throw new Error(`API error: ${response.status} ${response.statusText}`);
+          }
+        }
+
+        const result = await response.json();
+        if (result.candidates && result.candidates.length > 0 &&
+            result.candidates[0].content && result.candidates[0].content.parts &&
+            result.candidates[0].content.parts.length > 0) {
+          const text = result.candidates[0].content.parts[0].text;
+          setSuggestions(text);
+        } else {
+          setSuggestions('Could not generate suggestions. Unexpected API response structure.');
+        }
+        break; // Success, exit loop
+      } catch (error) {
+        console.error('Error generating suggestions:', error);
+        setSuggestions(`Failed to generate suggestions: ${error.message}`);
+        break; // Exit loop on other errors
+      } finally {
+        setIsLoadingSuggestions(false);
+      }
+    }
+  };
+
+
+  const renderReviewContent = (view) => {
+    let filteredEntries = [];
+    let title = '';
+    let selector = null;
+    let periodType = ''; // Used for LLM prompts
+
+    if (view === 'weekly') {
+      title = 'Weekly Review';
+      periodType = 'week';
+      const availableWeeks = getAvailablePeriods('week');
+      selector = (
+        <select
+          className="p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          value={selectedWeek}
+          onChange={(e) => { setSelectedWeek(e.target.value); setInsights(''); setSuggestions(''); }} // Clear LLM output on period change
+        >
+          <option value="">Select a Week</option>
+          {availableWeeks.map(week => (
+            <option key={week} value={week}>{week}</option>
+          ))}
+        </select>
+      );
+      filteredEntries = getFilteredEntries('weekly');
+    } else if (view === 'monthly') {
+      title = 'Monthly Review';
+      periodType = 'month';
+      const availableMonths = getAvailablePeriods('month');
+      selector = (
+        <select
+          className="p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          value={selectedMonth}
+          onChange={(e) => { setSelectedMonth(e.target.value); setInsights(''); setSuggestions(''); }} // Clear LLM output on period change
+        >
+          <option value="">Select a Month</option>
+          {availableMonths.map(month => (
+            <option key={month} value={month}>{month}</option>
+          ))}
+        </select>
+      );
+      filteredEntries = getFilteredEntries('monthly');
+    } else if (view === 'quarterly') {
+      title = 'Quarterly Review';
+      periodType = 'quarter';
+      const availableQuarters = getAvailablePeriods('quarter');
+      selector = (
+        <select
+          className="p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          value={selectedQuarter}
+          onChange={(e) => { setSelectedQuarter(e.target.value); setInsights(''); setSuggestions(''); }} // Clear LLM output on period change
+        >
+          <option value="">Select a Quarter</option>
+          {availableQuarters.map(quarter => (
+            <option key={quarter} value={quarter}>{quarter}</option>
+          ))}
+        </select>
+      );
+      filteredEntries = getFilteredEntries('quarterly');
+    }
+
+    const summary = calculateReviewSummary(filteredEntries);
+
+    return (
+      <div className="p-6 bg-white rounded-lg shadow-md">
+        <h2 className="text-2xl font-bold text-gray-800 mb-4">{title}</h2>
+        <div className="mb-4">
+          {selector}
+        </div>
+
+        {filteredEntries.length > 0 ? (
+          <div>
+            <h3 className="text-xl font-semibold text-gray-700 mb-2">Summary:</h3>
+            <p className="text-gray-600">Total Entries: <span className="font-medium">{summary.totalEntries}</span></p>
+            <p className="text-gray-600">Average Subjective Rating: <span className="font-medium">{summary.avgSubjectiveRating}</span></p>
+            <p className="text-gray-600">Total Deep Work Hours: <span className="font-medium">{summary.totalDeepWorkHours}</span></p>
+            <p className="text-gray-600">Days with Exercise: <span className="font-medium">{summary.exerciseDays}</span></p>
+            <p className="text-gray-600">Total Reading Time (mins): <span className="font-medium">{summary.totalReadingTime}</span></p>
+            {summary.commonActivities.length > 0 && (
+              <p className="text-gray-600">Common Activities: <span className="font-medium">{summary.commonActivities.join(', ')}</span></p>
+            )}
+
+            <div className="mt-6 flex flex-col sm:flex-row gap-4">
+              <button
+                onClick={() => generateInsights(filteredEntries, periodType)}
+                className="flex-1 bg-purple-600 text-white py-2 px-4 rounded-md shadow-sm text-base font-medium hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 transition duration-150 ease-in-out"
+                disabled={isLoadingInsights}
+              >
+                {isLoadingInsights ? 'Generating Insights...' : 'Generate Insights ✨'}
+              </button>
+              <button
+                onClick={() => generateMicroAdjustments(filteredEntries, periodType)}
+                className="flex-1 bg-emerald-600 text-white py-2 px-4 rounded-md shadow-sm text-base font-medium hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500 transition duration-150 ease-in-out"
+                disabled={isLoadingSuggestions}
+              >
+                {isLoadingSuggestions ? 'Generating Suggestions...' : 'Generate Micro-Adjustments ✨'}
+              </button>
+            </div>
+
+            {insights && (
+              <div className="mt-6 p-4 bg-blue-50 border-l-4 border-blue-400 text-blue-800 rounded-md shadow-sm">
+                <h4 className="font-semibold mb-2">AI Insights:</h4>
+                <p className="whitespace-pre-wrap">{insights}</p>
+              </div>
+            )}
+
+            {suggestions && (
+              <div className="mt-4 p-4 bg-green-50 border-l-4 border-green-400 text-green-800 rounded-md shadow-sm">
+                <h4 className="font-semibold mb-2">AI Micro-Adjustments:</h4>
+                <p className="whitespace-pre-wrap">{suggestions}</p>
+              </div>
+            )}
+
+            <h3 className="text-xl font-semibold text-gray-700 mt-6 mb-2">Detailed Entries:</h3>
+            <div className="overflow-x-auto">
+              <table className="min-w-full bg-white border border-gray-200 rounded-md">
+                <thead>
+                  <tr className="bg-gray-100 text-left text-gray-600 uppercase text-sm leading-normal">
+                    <th className="py-3 px-6 border-b border-gray-200">Date</th>
+                    <th className="py-3 px-6 border-b border-gray-200">Activity Summary</th>
+                    <th className="py-3 px-6 border-b border-gray-200">Deep Work (Hrs)</th>
+                    <th className="py-3 px-6 border-b border-gray-200">Rating</th>
+                    <th className="py-3 px-6 border-b border-gray-200">Exercise</th>
+                    <th className="py-3 px-6 border-b border-gray-200">Reading (mins)</th>
+                    <th className="py-3 px-6 border-b border-gray-200">Notes</th>
+                  </tr>
+                </thead>
+                <tbody className="text-gray-700 text-sm">
+                  {filteredEntries.map((entry) => (
+                    <tr key={entry.id} className="border-b border-gray-200 hover:bg-gray-50">
+                      <td className="py-3 px-6 whitespace-nowrap">{entry.date}</td>
+                      <td className="py-3 px-6 max-w-xs overflow-hidden text-ellipsis">{entry.activitySummary}</td>
+                      <td className="py-3 px-6">{entry.deepWorkHours}</td>
+                      <td className="py-3 px-6">{entry.subjectiveRating}</td>
+                      <td className="py-3 px-6">{entry.exercise ? 'Yes' : 'No'}</td>
+                      <td className="py-3 px-6">{entry.readingTime}</td>
+                      <td className="py-3 px-6 max-w-xs overflow-hidden text-ellipsis">{entry.notes}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ) : (
+          <p className="text-gray-500">No entries available for the selected period.</p>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-indigo-50 to-purple-100 p-4 sm:p-8 font-inter">
+      <script src="https://cdn.tailwindcss.com"></script>
+      <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+      <style>
+        {`
+        body {
+          font-family: 'Inter', sans-serif;
+        }
+        .rating-radio input[type="radio"] {
+          display: none;
+        }
+        .rating-radio label {
+          display: inline-block;
+          padding: 0.5rem 1rem;
+          margin: 0 0.25rem;
+          border-radius: 0.5rem;
+          cursor: pointer;
+          transition: all 0.2s ease-in-out;
+          background-color: #e2e8f0; /* bg-gray-200 */
+          color: #4a5568; /* text-gray-700 */
+          font-weight: 500;
+        }
+        .rating-radio input[type="radio"]:checked + label {
+          background-color: #6366f1; /* bg-indigo-500 */
+          color: white;
+          box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+          transform: translateY(-2px);
+        }
+        .rating-radio label:hover {
+          background-color: #cbd5e0; /* bg-gray-300 */
+        }
+        `}
+      </style>
+
+      <div className="max-w-4xl mx-auto bg-white rounded-xl shadow-lg overflow-hidden">
+        <div className="p-6 sm:p-8 bg-indigo-600 text-white text-center">
+          <h1 className="text-3xl sm:text-4xl font-extrabold mb-2">Good Life Algorithm Tracker</h1>
+          <p className="text-indigo-100 text-lg">Track your days, discover what brings you fulfillment.</p>
+        </div>
+
+        {/* Navigation Tabs */}
+        <div className="flex justify-center bg-gray-50 border-b border-gray-200">
+          <button
+            className={`py-3 px-6 text-sm font-medium ${currentView === 'daily' ? 'text-indigo-700 border-b-2 border-indigo-700' : 'text-gray-600 hover:text-indigo-700'}`}
+            onClick={() => setCurrentView('daily')}
+          >
+            Daily Tracking
+          </button>
+          <button
+            className={`py-3 px-6 text-sm font-medium ${currentView === 'weekly' ? 'text-indigo-700 border-b-2 border-indigo-700' : 'text-gray-600 hover:text-indigo-700'}`}
+            onClick={() => { setCurrentView('weekly'); setSelectedWeek(''); setInsights(''); setSuggestions(''); }}
+          >
+            Weekly Review
+          </button>
+          <button
+            className={`py-3 px-6 text-sm font-medium ${currentView === 'monthly' ? 'text-indigo-700 border-b-2 border-indigo-700' : 'text-gray-600 hover:text-indigo-700'}`}
+            onClick={() => { setCurrentView('monthly'); setSelectedMonth(''); setInsights(''); setSuggestions(''); }}
+          >
+            Monthly Review
+          </button>
+          <button
+            className={`py-3 px-6 text-sm font-medium ${currentView === 'quarterly' ? 'text-indigo-700 border-b-2 border-indigo-700' : 'text-gray-600 hover:text-indigo-700'}`}
+            onClick={() => { setCurrentView('quarterly'); setSelectedQuarter(''); setInsights(''); setSuggestions(''); }}
+          >
+            Quarterly Review
+          </button>
+        </div>
+
+        {/* Content based on currentView */}
+        <div className="p-6 sm:p-8">
+          {currentView === 'daily' && (
+            <div className="p-6 bg-white rounded-lg shadow-md">
+              <h2 className="text-2xl font-bold text-gray-800 mb-4">Log Your Day</h2>
+              <form onSubmit={handleDailySubmit} className="space-y-4">
+                <div>
+                  <label htmlFor="date" className="block text-sm font-medium text-gray-700 mb-1">Date:</label>
+                  <input
+                    type="date"
+                    id="date"
+                    value={date}
+                    onChange={(e) => setDate(e.target.value)}
+                    className="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+                    required
+                  />
+                </div>
+                <div>
+                  <label htmlFor="activitySummary" className="block text-sm font-medium text-gray-700 mb-1">Activity Summary:</label>
+                  <textarea
+                    id="activitySummary"
+                    rows="3"
+                    value={activitySummary}
+                    onChange={(e) => setActivitySummary(e.target.value)}
+                    className="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+                    placeholder="Briefly describe your main activities (e.g., worked on project X, spent time with family, exercised)."
+                    required
+                  ></textarea>
+                </div>
+                <div>
+                  <label htmlFor="deepWorkHours" className="block text-sm font-medium text-gray-700 mb-1">Deep Work Hours (e.g., 3.5):</label>
+                  <input
+                    type="number"
+                    id="deepWorkHours"
+                    step="0.5"
+                    min="0"
+                    max="24"
+                    value={deepWorkHours}
+                    onChange={(e) => setDeepWorkHours(e.target.value)}
+                    className="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+                    placeholder="Enter hours spent on focused work"
+                    required
+                  />
+                </div>
+                {/* New: Exercise (Yes/No) */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Exercise:</label>
+                  <div className="flex items-center space-x-4">
+                    <label className="inline-flex items-center">
+                      <input
+                        type="radio"
+                        name="exercise"
+                        value="true"
+                        checked={exercise === true}
+                        onChange={() => setExercise(true)}
+                        className="form-radio h-4 w-4 text-indigo-600"
+                      />
+                      <span className="ml-2 text-gray-700">Yes</span>
+                    </label>
+                    <label className="inline-flex items-center">
+                      <input
+                        type="radio"
+                        name="exercise"
+                        value="false"
+                        checked={exercise === false}
+                        onChange={() => setExercise(false)}
+                        className="form-radio h-4 w-4 text-indigo-600"
+                      />
+                      <span className="ml-2 text-gray-700">No</span>
+                    </label>
+                  </div>
+                </div>
+                {/* New: Reading Time (mins) */}
+                <div>
+                  <label htmlFor="readingTime" className="block text-sm font-medium text-gray-700 mb-1">Reading Time (minutes):</label>
+                  <input
+                    type="number"
+                    id="readingTime"
+                    min="0"
+                    value={readingTime}
+                    onChange={(e) => setReadingTime(e.target.value)}
+                    className="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+                    placeholder="Enter minutes spent reading"
+                    required
+                  />
+                </div>
+                {/* New: Notes */}
+                <div>
+                  <label htmlFor="notes" className="block text-sm font-medium text-gray-700 mb-1">Notes:</label>
+                  <textarea
+                    id="notes"
+                    rows="2"
+                    value={notes}
+                    onChange={(e) => setNotes(e.target.value)}
+                    className="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+                    placeholder="Any additional thoughts or observations about your day."
+                  ></textarea>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Subjective Rating:</label>
+                  <div className="flex justify-center rating-radio">
+                    {[-2, -1, 0, 1, 2].map((rating) => (
+                      <React.Fragment key={rating}>
+                        <input
+                          type="radio"
+                          id={`rating-${rating}`}
+                          name="subjectiveRating"
+                          value={rating}
+                          checked={subjectiveRating === rating}
+                          onChange={(e) => setSubjectiveRating(parseInt(e.target.value))}
+                          required
+                        />
+                        <label htmlFor={`rating-${rating}`}>{rating}</label>
+                      </React.Fragment>
+                    ))}
+                  </div>
+                  <div className="text-xs text-gray-600 text-center mt-2 space-y-1">
+                    <p><span className="font-semibold text-red-600">-2: Very Bad Day.</span> Felt drained, unproductive, significant negative events, high stress.</p>
+                    <p><span className="font-semibold text-red-400">-1: Below Average Day.</span> More negatives than positives, some frustration, low energy.</p>
+                    <p><span className="font-semibold text-gray-500">0: Neutral Day.</span> Balanced, neither particularly good nor bad, routine.</p>
+                    <p><span className="font-semibold text-green-400">+1: Good Day.</span> Felt productive, positive interactions, good energy, minor frustrations.</p>
+                    <p><span className="font-semibold text-green-600">+2: Great Day.</span> Felt energized, highly productive, joyful, significant positive events, highly fulfilling.</p>
+                  </div>
+                </div>
+                <button
+                  type="submit"
+                  className="w-full bg-indigo-600 text-white py-2 px-4 border border-transparent rounded-md shadow-sm text-lg font-medium hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition duration-150 ease-in-out"
+                >
+                  Save Daily Entry
+                </button>
+                {message && (
+                  <p className="mt-4 text-center text-sm font-medium text-green-600">
+                    {message}
+                  </p>
+                )}
+              </form>
+            </div>
+          )}
+
+          {currentView === 'weekly' && renderReviewContent('weekly')}
+          {currentView === 'monthly' && renderReviewContent('monthly')}
+          {currentView === 'quarterly' && renderReviewContent('quarterly')}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default App;
